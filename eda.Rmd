@@ -1,0 +1,154 @@
+---
+title: "MTG sim scratchpad"
+author: "Jonathan Che"
+date: "2024-12-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+require(tidyverse)
+COLORS <- c("W", "U", "B", "R", "G")
+```
+
+# Overview
+
+Instead of doing math, let's run some numbers and make some pictures to understand how to build manabases in limited.
+
+# Functions
+
+## Card class
+
+Create card class to make my life easier later on
+
+```{r}
+new_card <- function(x = character()) {
+  structure(x, class="card")
+}
+
+validate_card <- function(x) {
+  values <- unclass(x)
+  colors <- attr(x, "colors")
+  tapped <- attr(x, "tapped")
+  
+  if(!is.character(x)) {
+    stop("Card must be represented by a string")
+  }
+  if (!all(colors %in% COLORS)) {
+    stop("Card must have colors in WUBRG")
+  }
+  if (!is.logical(tapped)) {
+    stop("Card must either enter tapped or untapped")
+  }
+  
+  x
+}
+
+card <- function(x = character()) {
+  cd <- new_card(x)
+  
+  attr(cd, "type") <- cd |> 
+    substr(1,1) |> 
+    toupper() |> 
+    switch(S="spell", F="fetch", "land")
+  attr(cd, "colors") <- COLORS[sapply(COLORS, function(x) grepl(x, cd))]
+  attr(cd, "tapped") <- substr(cd, nchar(cd), nchar(cd)) == "T"
+  
+  validate_card(cd)
+}
+
+print.card <- function(x) {
+  cat("Class:", attr(x, "type"), "\n")
+  if (attr(x, "type") == "land") cat("Colors:", attr(x, "colors"), "\n")
+  if (attr(x, "tapped")) cat("Enters tapped")
+}
+
+is.card <- function(x) {
+  class(x) == "card"
+}
+```
+
+## Deck
+
+A deck is just a list of cards (not an actual class).
+
+Basic deck setup
+
+```{r}
+# build deck
+build_deck <- \(num_cards = 40, ...) {
+  args <- list(...)
+  
+  # populate deck with named cards
+  vec <- rep(lapply(names(args), card), args)
+  
+  # fill rest of deck with spells
+  if (length(vec) < num_cards) {   
+    vec <- c(vec, lapply(rep("S", num_cards-length(vec)), card))
+  }
+  
+  vec
+}
+
+# shuffle deck
+shuffle <- \(d) {sample(d, length(d), replace=T)}
+
+# draw top `size` cards from deck
+draw <- \(d, size=7) {d[1:size]}
+```
+
+Functions to count colored sources.
+This is where the juice of the `card` class gets squeezed!
+
+```{r}
+d <- build_deck(W=5, U=5, B=5, RG=7, WR=11)
+
+count_spells <- function(d) {
+  stopifnot(all(sapply(d, is.card)))
+  d |> 
+    sapply(function(x) attr(x, "type") == "spell") |> 
+    sum()
+}
+
+count_colors <- function(d) {
+  stopifnot(all(sapply(d, is.card)))
+}
+```
+
+
+
+# Example
+
+```{r}
+build_deck(W = 8, R = 9) |> 
+  shuffle() |> 
+  draw() |> 
+  count_color("W")
+```
+
+
+# TODO
+
+* Implement duals
+* Implement "lands by turn x"
+* Implement terramorphic expanse
+
+
+TODO: card objects, focused on lands:
+
+* Type: land, fetch, spell
+* Color: what the land can produce/fetch
+* Tapped: whether card enters tapped
+
+Spells: S
+Basics: WUBRG
+Duals: WU, ..., RG[T]
+Fetches: F[colors][T]
+
+We could then count number of lands, number of cards/spells of each color, etc. by working with these objects.
+A Deck is still just a list of cards, no need to make a deck an object
+
+
+
+
