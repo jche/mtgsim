@@ -14,20 +14,26 @@ COLORS <- c("W", "U", "B", "R", "G")
 
 # Overview
 
-Instead of doing math, let's run some numbers and make some pictures to understand how to build manabases in limited.
+Instead of doing math, let's run some numbers and make some pictures to understand how to build optimal manabases in limited.
+Pet project to learn about S3 classes in R (https://adv-r.hadley.nz/s3.html#s3).
 
 # Functions
 
 ## Card class
 
-Create card class to make my life easier later on
+A card is a string `[S/L][WUBRG][T]` denoting:
+
+* `[S/L]`: spell/land
+* `[WUBRG]`: color(s)
+* `[T]`: enters tapped?
 
 ```{r}
-new_card <- function(x = character()) {
+new_card <- \(x = character()) {
+  stopifnot(is.character(x))
   structure(x, class="card")
 }
 
-validate_card <- function(x) {
+validate_card <- \(x) {
   values <- unclass(x)
   colors <- attr(x, "colors")
   tapped <- attr(x, "tapped")
@@ -45,74 +51,151 @@ validate_card <- function(x) {
   x
 }
 
-card <- function(x = character()) {
-  cd <- new_card(x)
-  
-  attr(cd, "type") <- cd |> 
+card <- \(x = character()) {
+
+  attr(x, "type") <- x |> 
     substr(1,1) |> 
     toupper() |> 
     switch(S="spell", F="fetch", "land")
-  attr(cd, "colors") <- COLORS[sapply(COLORS, function(x) grepl(x, cd))]
-  attr(cd, "tapped") <- substr(cd, nchar(cd), nchar(cd)) == "T"
+  attr(x, "colors") <- COLORS[sapply(COLORS, \(y) grepl(y, x))]
+  attr(x, "tapped") <- substr(x, nchar(x), nchar(x)) == "T"
   
-  validate_card(cd)
+  x |> 
+    new_card() |> 
+    validate_card()
 }
 
-print.card <- function(x) {
+print.card <- \(x) {
   cat("Class:", attr(x, "type"), "\n")
   if (attr(x, "type") == "land") cat("Colors:", attr(x, "colors"), "\n")
   if (attr(x, "tapped")) cat("Enters tapped")
 }
 
-is.card <- function(x) {
+is.card <- \(x) {
   class(x) == "card"
 }
 ```
 
-## Deck
+## Deck class
 
-A deck is just a list of cards (not an actual class).
-
-Basic deck setup
+A deck is a list of cards.
+By default, decks are constructed by passing in a list of cards.
+Helper function `build_deck()` offers a shortcut for constructing decks, by passing in card names followed by card quantities, e.g., `d <- build_deck(W=8, U=7, WUT=2)`.
 
 ```{r}
-# build deck
+new_deck <- \(x = list(), size = integer(), lands = integer()) {
+  stopifnot(is.list(x))
+  stopifnot(is.integer(size))
+  stopifnot(is.integer(lands))
+  
+  structure(x, class="deck", size=size, lands=lands)
+}
+
+validate_deck <- \(x) {
+  if (!all(sapply(x, is.card))) {
+    stop("Deck must only contain cards")
+  }
+  
+  if(attr(x, "size") < attr(x, "lands")) {
+    stop("Number of lands cannot exceed deck size")
+  }
+  
+  x
+}
+
+deck <- \(x = list(), size = length(x), lands = 0) {
+  stopifnot(all(sapply(x, is.card)))
+  
+  # record number of lands, if x is nonempty and lands is not specified
+  if (lands == 0 & size > 0) {
+    lands <- x |> 
+      sapply(function(x) attr(x, "type") == "land") |> 
+      sum()
+  }
+  
+  x |> 
+    new_deck(size=size, lands=lands) |> 
+    validate_deck()
+}
+
+print.deck <- \(x) {
+  cat("Size:", attr(x, "size"), "\n")
+  cat("Lands:", attr(x, "lands"), "\n")
+  cat("Spells:", attr(x, "size") - attr(x, "lands"), "\n")
+  cat("Cards:", paste(x, collapse=", "))
+}
+
+is.deck <- \(x) {
+  class(x) == "deck"
+}
+
+# helper function to shortcut building a deck
+#  - instead of individually  specifying each card, 
+#    specify list of [card] = [count]
 build_deck <- \(num_cards = 40, ...) {
   args <- list(...)
   
-  # populate deck with named cards
+  # populate deck with named lands
   vec <- rep(lapply(names(args), card), args)
-  
+
   # fill rest of deck with spells
   if (length(vec) < num_cards) {   
     vec <- c(vec, lapply(rep("S", num_cards-length(vec)), card))
   }
   
-  vec
+  deck(vec)
 }
-
-# shuffle deck
-shuffle <- \(d) {sample(d, length(d), replace=T)}
-
-# draw top `size` cards from deck
-draw <- \(d, size=7) {d[1:size]}
 ```
 
-Functions to count colored sources.
-This is where the juice of the `card` class gets squeezed!
+## Deck functions
+
+Functions that we can apply to decks.
 
 ```{r}
-d <- build_deck(W=5, U=5, B=5, RG=7, WR=11)
-
-count_spells <- function(d) {
-  stopifnot(all(sapply(d, is.card)))
+# shuffle deck
+shuffle <- \(d) {
+  stopifnot(is.deck(d))
   d |> 
-    sapply(function(x) attr(x, "type") == "spell") |> 
-    sum()
+    sample(length(d), replace=F) |> 
+    deck()
 }
 
+# draw top `size` cards from deck
+draw <- \(d, size=7) {
+  stopifnot(is.deck(d))
+  deck(d[1:size])
+}
+```
+
+## Counting functions
+
+Functions to count colored sources.
+This is where the juice of object oriented setup gets squeezed!
+
+```{r}
+size <- function(d) {
+  stopifnot(is.deck(d))
+  attr(d, "size")
+}
+count_spells <- function(d) {
+  stopifnot(is.deck(d))
+  attr(d, "size") - attr(d, "lands")
+}
+count_lands <- function(d) {
+  stopifnot(is.deck(d))
+  attr(d, "lands")
+}
+
+# count color sources in hand
 count_colors <- function(d) {
-  stopifnot(all(sapply(d, is.card)))
+  stopifnot(is.deck(d))
+  
+  COLORS |> 
+    sapply(\(color) {
+      d |> 
+        sapply(\(card) {color %in% attr(card, "colors")}) |> 
+        sum()
+    })
 }
 ```
 
@@ -121,34 +204,18 @@ count_colors <- function(d) {
 # Example
 
 ```{r}
-build_deck(W = 8, R = 9) |> 
-  shuffle() |> 
-  draw() |> 
-  count_color("W")
+d <- build_deck(W=8, U=8, WUT=1)
+d
+
+d |> shuffle() |> draw() |> count_colors()
 ```
 
 
 # TODO
 
-* Implement duals
-* Implement "lands by turn x"
+* Implement "count untapped lands by turn x"
 * Implement terramorphic expanse
-
-
-TODO: card objects, focused on lands:
-
-* Type: land, fetch, spell
-* Color: what the land can produce/fetch
-* Tapped: whether card enters tapped
-
-Spells: S
-Basics: WUBRG
-Duals: WU, ..., RG[T]
-Fetches: F[colors][T]
-
-We could then count number of lands, number of cards/spells of each color, etc. by working with these objects.
-A Deck is still just a list of cards, no need to make a deck an object
-
+* Implement MDFC
 
 
 
