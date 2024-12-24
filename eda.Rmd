@@ -8,6 +8,7 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+require(data.tree)
 require(tidyverse)
 COLORS <- c("W", "U", "B", "R", "G")
 ```
@@ -129,27 +130,34 @@ is.deck <- \(x) {
   class(x) == "deck"
 }
 
+summary.deck <- \(x) {
+  x |> 
+    as.character() |> 
+    table()
+}
+
 # helper function to shortcut building a deck
 #  - instead of individually  specifying each card, 
 #    specify list of [card] = [count]
 build_deck <- \(num_cards = 40, ...) {
   args <- list(...)
   
-  # populate deck with named lands
-  vec <- rep(lapply(names(args), card), args)
-
-  # fill rest of deck with spells
-  if (length(vec) < num_cards) {   
-    vec <- c(vec, lapply(rep("S", num_cards-length(vec)), card))
+  # populate deck with named lands & remaining slots with spells
+  vec <- rep(names(args), args)
+  if (length(vec) < num_cards) {
+    vec <- c(vec, rep("S", num_cards-length(vec)) )
   }
-  
-  deck(vec)
+
+  vec |> 
+    lapply(card) |> 
+    deck()
 }
 ```
 
 ## Deck functions
 
 Functions that we can apply to decks.
+Treat hands as smaller decks.
 
 ```{r}
 # shuffle deck
@@ -170,24 +178,24 @@ draw <- \(d, size=7) {
 ## Counting functions
 
 Functions to count colored sources.
-This is where the juice of object oriented setup gets squeezed!
+This is where the juice of our object-oriented setup gets squeezed!
 
 ```{r}
-size <- function(d) {
+size <- \(d) {
   stopifnot(is.deck(d))
   attr(d, "size")
 }
-count_spells <- function(d) {
+count_spells <- \(d) {
   stopifnot(is.deck(d))
   attr(d, "size") - attr(d, "lands")
 }
-count_lands <- function(d) {
+count_lands <- \(d) {
   stopifnot(is.deck(d))
   attr(d, "lands")
 }
 
 # count color sources in hand
-count_colors <- function(d) {
+count_colors <- \(d) {
   stopifnot(is.deck(d))
   
   COLORS |> 
@@ -197,25 +205,191 @@ count_colors <- function(d) {
         sum()
     })
 }
+
+check_hand <- \(d) {
+  stopifnot(is.deck(d))
+  sources <- count_colors(d)
+  cat(paste(d), "\n")
+  cat(count_spells(d), "spells, ", count_lands(d), "lands\n")
+  cat("Color sources:\n")
+  cat("W: ", sources["W"], "\n")
+  cat("U: ", sources["U"], "\n")
+  cat("B: ", sources["B"], "\n")
+  cat("R: ", sources["R"], "\n")
+  cat("G: ", sources["G"], "\n")
+}
+```
+
+## Opening hand functions
+
+Function to count number of distinct opening hands.
+Requires dynamic programming.
+
+```{r}
+count_opening_hands <- \(d, n=7) {
+  tab <- summary(d)
+  m <- length(tab)
+  # Create dp matrix: rows for categories, columns for possible sums
+  dp <- matrix(0, nrow = m + 1, ncol = n + 1)
+  dp[1, 1] <- 1  # Base case: 0 sum with 0 categories has 1 way
+  
+  # For each category
+  for (i in 1:m) {
+    # For each possible sum
+    for (s in 0:n) {
+      # For each possible value we could take from current category
+      for (k in 0:min(tab[i], s)) {
+        # Add number of ways to make remaining sum with previous categories
+        dp[i + 1, s + 1] <- dp[i + 1, s + 1] + dp[i, s - k + 1]
+      }
+    }
+  }
+  print(dp)
+  dp[m + 1, n + 1]
+}
+```
+
+Function to calculate probability of given opening hand.
+Multivariate hypergeometric.
+
+```{r}
+
+```
+
+Function to enumerate all possible opening hands.
+
+Maybe just do this when counting them...?
+
+```{r}
+get_opening_hands <- \(d) {
+  
+}
 ```
 
 
 
-# Example
+
+## Example
 
 ```{r}
 d <- build_deck(W=8, U=8, WUT=1)
 d
 
-d |> shuffle() |> draw() |> count_colors()
+d |> shuffle() |> draw() |> check_hand()
 ```
 
 
-# TODO
+# Building trees
+
+To count number of untapped color sources by turn x...
+It's a recursive process! 
+If I have one untapped land and one tapped land in my opener (and don't draw), I can have:
+
+* One untapped land T1, one untapped land T2
+* No untapped lands T1, two untapped lands T2
+
+These choices branch out!
+The optimal plays to make depend on the mana value you're trying to hit, as well as your remaining deck.
+
+## Brainstorming
+
+Option 1: given that there are only 40 cards in a limited deck, seems pretty computationally feasible to branch out all land-playing options and store in a tree.
+This might get annoying when running a bajillion simulations, but hard to tell?
+Note that we don't need to care which island gets played, e.g.
+Also, could we not just compute all the probabilities in closed form here...?
+
+Option 2: devise some sort of greedy algorithm.
+Issue is that this might not correspond to actual play.
+
+Solution: do option 1, but we just get exact probabilities -- no need to simulate these!
+It is annoying that 40 choose 7 is still ~18.6mil (though we get to eliminate some combinations, still on the order of 1mil) -- we'll likely still have to simulate starting hands.
+
+
+## `data.tree`
+
+```{r}
+d <- build_deck(W=8, U=8, WUT=1) |> shuffle()
+
+t <- Node$new(name = "deck", hand = d |> shuffle() |> draw())
+
+for (card in unique(t$Get("deck"))) {
+  
+}
+```
+
+
+## Can we just compute everything in closed form?
+
+Opening hands: in a monocolored 17-land deck, there are only 8 possible opening hands, each with probability $choose(n_l, k_l) * choose(n_s, k_s) / choose(40, 7)$.
+This would be incredibly easy to enumerate.
+
+With three card types, we end up with 36 options (assuming all card types have at least 7 cards).
+As we increase the number of card types, expect a factorial explosion.
+
+Q: is there a simple closed-form formula for enumerating the number of possible hands?
+I.e., given a jar with marbles of a bunch of different colors, how many unique color combos can I draw?
+
+A: Multivariate hypergeometric gives probability of each color combo.
+Size of support of multivariate hypergeometric gets us number of options.
+Expression for support looks like an optimization problem lol
+https://en.wikipedia.org/wiki/Hypergeometric_distribution#Multivariate_hypergeometric_distribution
+
+Eventually, this is going to factorially explode.
+E.g., with 40 unique cards, there are $40*39*38*37*36*35*34*33 = 3e12$ starting hand options.
+We might be in the computable range with most realistic scenarios, though, in which case we could just go ahead and fully enumerate everything in a single tree!
+
+
+# TODO, old
 
 * Implement "count untapped lands by turn x"
 * Implement terramorphic expanse
 * Implement MDFC
+
+
+# TODO, new
+
+* Probably just do things in python? Annoying to have to work with a tree package.
+
+# Final design
+
+A card object has the following attributes and functions [future features in brackets]
+
+* type: land/spell/[other, e.g., creature/spell]
+* color: WUBRG[V]
+* tapped: T/F
+* [mv: 0-16]
+* [a card is hashable]
+
+A deck object has the following attributes and functions [future features in brackets]
+
+* deck: dictionary of cards:counts
+* draw(): randomly return one card and remove it from the deck
+
+A game object has the following attributes [future features in brackets]
+
+* turn: turn count
+* hand: list of cards
+* deck: deck
+* [probability: conditional probability of ending up in this state, given previous state]
+
+A game object has the following functions [future features in brackets]
+
+* turn: draw a card, untap tapped cards
+* count_lands: count lands in hand
+* count_colors: count color sources in hand
+
+A gametree object is a tree, where each node is a game.
+The first layer of nodes contains all possible opening hands.
+Subsequent layers contain all possible sequences of draws.
+
+
+Note: this isn't the most efficient data representation, since game states can merge.
+To leave room for future work (e.g., casting spells, tempo, etc.), we'll stick with this representation.
+
+
+
+
+
 
 
 
